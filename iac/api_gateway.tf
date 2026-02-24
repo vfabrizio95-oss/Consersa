@@ -1,0 +1,123 @@
+resource "aws_api_gateway_rest_api" "main" {
+  name        = "${local.prefix}-api"
+  description = "API Gateway Regional - ${local.prefix}"
+
+  endpoint_configuration {
+    types = ["REGIONAL"]
+  }
+  
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+resource "aws_api_gateway_authorizer" "cognito" {
+  name            = "${local.prefix}-cognito-auth"
+  rest_api_id     = aws_api_gateway_rest_api.main.id
+  type            = "COGNITO_USER_POOLS"
+  identity_source = "method.request.header.Authorization"
+  provider_arns   = [aws_cognito_user_pool.main.arn]
+}
+
+resource "aws_api_gateway_resource" "valorizacion" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  parent_id   = aws_api_gateway_rest_api.main.root_resource_id
+  path_part   = "valorizacion"
+}
+
+resource "aws_api_gateway_resource" "valorizacion_id" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  parent_id   = aws_api_gateway_resource.valorizacion.id
+  path_part   = "{id}"
+}
+
+resource "aws_api_gateway_method" "valorizacion_post" {
+  rest_api_id   = aws_api_gateway_rest_api.main.id
+  resource_id = aws_api_gateway_resource.valorizacion_id.id
+  http_method   = "POST"
+  authorization = "COGNITO_USER_POOLS"
+  authorizer_id = aws_api_gateway_authorizer.cognito.id
+}
+
+resource "aws_api_gateway_integration" "valorizacion_post" {
+  rest_api_id             = aws_api_gateway_rest_api.main.id
+  resource_id             = aws_api_gateway_resource.valorizacion_id.id
+  http_method             = aws_api_gateway_method.valorizacion_post.http_method
+  integration_http_method = "POST"
+  type                    = "AWS_PROXY"
+  uri                     = aws_lambda_function.valorizacion_consersa.invoke_arn
+}
+
+resource "aws_api_gateway_resource" "orden" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  parent_id   = aws_api_gateway_rest_api.main.root_resource_id
+  path_part   = "orden"
+}
+
+resource "aws_api_gateway_resource" "orden_id" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  parent_id   = aws_api_gateway_resource.orden.id
+  path_part   = "{id}"
+}
+
+resource "aws_api_gateway_method" "post_orden" {
+  rest_api_id   = aws_api_gateway_rest_api.main.id
+  resource_id   = aws_api_gateway_resource.orden_id.id
+  http_method   = "POST"
+  authorization = "COGNITO_USER_POOLS"
+  authorizer_id = aws_api_gateway_authorizer.cognito.id
+}
+
+resource "aws_api_gateway_integration" "post_orden" {
+  rest_api_id             = aws_api_gateway_rest_api.main.id
+  resource_id             = aws_api_gateway_resource.orden_id.id
+  http_method             = aws_api_gateway_method.post_orden.http_method
+  integration_http_method = "POST"
+  type                    = "AWS_PROXY"
+  uri                     = aws_lambda_function.orden_recibida.invoke_arn
+}
+
+resource "aws_api_gateway_method" "get_orden" {
+  rest_api_id   = aws_api_gateway_rest_api.main.id
+  resource_id   = aws_api_gateway_resource.orden_id.id
+  http_method   = "GET"
+  authorization = "COGNITO_USER_POOLS"
+  authorizer_id = aws_api_gateway_authorizer.cognito.id
+}
+
+resource "aws_api_gateway_integration" "get_orden" {
+  rest_api_id             = aws_api_gateway_rest_api.main.id
+  resource_id             = aws_api_gateway_resource.orden_id.id
+  http_method             = aws_api_gateway_method.get_orden.http_method
+  integration_http_method = "POST"
+  type                    = "AWS_PROXY"
+  uri                     = aws_lambda_function.consultar_ordenes.invoke_arn
+}
+
+resource "aws_api_gateway_deployment" "main" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+
+   triggers = {
+    redeploy = sha1(join(",", [
+      jsonencode(aws_api_gateway_integration.valorizacion_post),
+      jsonencode(aws_api_gateway_integration.post_orden),
+      jsonencode(aws_api_gateway_integration.get_orden),
+    ]))
+  }
+
+  depends_on = [
+    aws_api_gateway_integration.valorizacion_post,
+    aws_api_gateway_integration.post_orden,
+    aws_api_gateway_integration.get_orden,
+  ]
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+resource "aws_api_gateway_stage" "main" {
+  deployment_id         = aws_api_gateway_deployment.main.id
+  rest_api_id           = aws_api_gateway_rest_api.main.id
+  stage_name            = var.environment
+}
